@@ -1,26 +1,15 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-"""Download historical candlestick data for all trading pairs on Binance.com.
-All trading pair data is checked for integrity, sorted and saved as both a CSV
-and a Parquet file. The CSV files act as a raw buffer on every update round.
-The Parquet files are much more space efficient (~50GB vs ~10GB) and are
-therefore the files used to upload to Kaggle after each run.
-"""
-
-__author__ = 'GOSUTO.AI'
-
 import json
 import os
 import random
 import subprocess
 import time
 from datetime import date, datetime, timedelta
-
 import numpy as np
 import requests
 import pandas as pd
-
 import preprocessing as pp
 
 START_TIME = (datetime.now() - timedelta(hours=0, minutes=5))
@@ -125,11 +114,11 @@ def all_candles_to_csv(base, quote, interval='1'):
 
         if not new_batch.empty:
             batches.append(new_batch)
-        new_file = False
+            new_file = False
         last_datetime = datetime.fromtimestamp(last_timestamp / 1000)
 
         covering_spaces = 20 * ' '
-        print(datetime.now(), base, quote, interval, str(last_datetime)+covering_spaces, end='\r', flush=True)
+        print(datetime.now(), base, quote, interval + 'min', str(last_datetime)+covering_spaces, end='\r', flush=True)
 
     # write clean version of csv to parquet
     parquet_name = f'{base}-{quote}.parquet'
