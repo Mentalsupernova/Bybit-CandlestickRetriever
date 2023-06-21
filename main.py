@@ -40,6 +40,8 @@ def get_batch(symbol, interval='1', start_time=0, limit=1000):
     try:
         # timeout should also be given as a parameter to the function
         response = requests.get(f'{API_BASE}market/kline', params, timeout=30)
+        data = response.json()['result']['list']
+
     except requests.exceptions.ConnectionError:
         print('Connection error, Cooling down for 5 mins...')
         time.sleep(5 * 60)
@@ -55,8 +57,13 @@ def get_batch(symbol, interval='1', start_time=0, limit=1000):
         time.sleep(5 * 60)
         return get_batch(symbol, interval, start_time, limit)
 
+    except Exception as e:
+        print(f'Unknown error: {e}, Cooling down for 5 min...')
+        time.sleep(5 * 60)
+        return get_batch(symbol, interval, start_time, limit)
+
     if response.status_code == 200:
-        df = pd.DataFrame(response.json()['result']['list'], columns=LABELS)
+        df = pd.DataFrame(data, columns=LABELS)
         df['open_time'] = df['open_time'].astype(np.int64)
         df = df[df.open_time < START_TIME.timestamp() * 1000]
         return df
@@ -125,7 +132,7 @@ def all_candles_to_csv(base, quote, interval='1'):
     full_path = f'compressed/{parquet_name}'
     df = pd.concat(batches, ignore_index=True)
     df = pp.quick_clean(df)
-    
+
     pp.write_raw_to_parquet(df, full_path)
 
     # in the case that new data was gathered write it to disk

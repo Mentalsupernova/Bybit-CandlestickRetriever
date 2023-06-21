@@ -1,7 +1,7 @@
 import os
 from datetime import date, datetime, timedelta
-
 import pandas as pd
+
 
 def set_dtypes(df):
     """
@@ -66,14 +66,14 @@ def quick_clean(df):
     return df
 
 
-def add_missing_minutes(initialData):
+def add_missing_minutes(initial_data):
     """
     Repeat entries to fill up for missing minutes.
 
     """
     clean_data = []
     previous_row = []
-    for row in initialData:
+    for row in initial_data:
         if len(previous_row) and row['datetime'] - previous_row['datetime'] > timedelta(minutes=1):
             current = previous_row.copy()
             while current['datetime'] + timedelta(minutes=1) < row['datetime']:
@@ -83,8 +83,8 @@ def add_missing_minutes(initialData):
                 current['low'] = current['close']
                 current['high'] = current['close']
                 current['open'] = current['close']
-                missingRow = current.copy()
-                clean_data.append(missingRow)
+                missing_row = current.copy()
+                clean_data.append(missing_row)
 
         previous_row = row.copy()
         clean_data.append(row)
@@ -96,21 +96,20 @@ def add_missing_minutes_df(df):
     Repeat entries of the given dataframe to fill up for missing minutes.
     
     """
-    historicalDataDict = add_missing_minutes(df.to_dict('records'))
-    historicalData = pd.DataFrame(historicalDataDict)
-    return historicalData
+    historical_data_dict = add_missing_minutes(df.to_dict('records'))
+    return pd.DataFrame(historical_data_dict)
 
 
 def write_raw_to_parquet(df, full_path):
     """takes raw df and writes a parquet to disk"""
 
-    df = set_dtypes_compressed(df)
+    df_copy = df.copy()
+    df_copy = set_dtypes_compressed(df_copy)
 
     # give all pairs the same nice cut-off
-    #df = df[df.index < str(date.today())]
+    #df_copy = df_copy[df_copy.index < str(date.today())]
 
-    # post processing for FDA
-    df_copy = df.copy()
+    # post-processing for FDA
     df_copy['datetime'] = df_copy.index
     df_copy['datetime'] = df_copy['datetime'].dt.floor('Min')
     df_copy = df_copy.drop_duplicates(subset=['datetime'], keep='first')
