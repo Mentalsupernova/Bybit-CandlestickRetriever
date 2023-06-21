@@ -40,7 +40,7 @@ def get_batch(symbol, interval='1', start_time=0, limit=1000):
     try:
         # timeout should also be given as a parameter to the function
         response = requests.get(f'{API_BASE}market/kline', params, timeout=30)
-        data = response.json()['result']['list']
+        data = response.json()['result']['list'].reverse()
 
     except requests.exceptions.ConnectionError:
         print('Connection error, Cooling down for 5 mins...')
