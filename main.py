@@ -75,8 +75,8 @@ def all_candles_to_csv(base, quote, interval='1'):
         new_file = False
     except FileNotFoundError:
         batches = [pd.DataFrame([], columns=LABELS)]
-        #last_timestamp = 1640995200000  # 2022-01-01
-        last_timestamp = 1577836800000  # 2020-01-01
+        # last_timestamp = int((datetime.now() - timedelta(days=7)).timestamp() * 1000)
+        last_timestamp = 1622505600000  # 2021-06-01
         new_file = True
     old_lines = len(batches[-1].index)
 
