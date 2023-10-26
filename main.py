@@ -5,6 +5,7 @@ import json
 import os
 import random
 import subprocess
+import sys
 import time
 from datetime import date, datetime, timedelta
 import numpy as np
@@ -25,13 +26,15 @@ LABELS = [
     'quote_asset_volume',
 ]
 
+category = 'spot'
+
 def get_batch(symbol, interval='1', start_time=0, limit=1000):
     """Use a GET request to retrieve a batch of candlesticks. Process the JSON into a pandas
     dataframe and return it. If not successful, return an empty dataframe.
     """
 
     params = {
-        'category': 'spot',
+        'category': category,
         'symbol': symbol,
         'interval': interval,
         'start': start_time,
@@ -147,9 +150,12 @@ def main():
     """Main loop; loop over all currency pairs that exist on the exchange. Once done upload the
     compressed (Parquet) dataset to Kaggle.
     """
+    global category
+    if len(sys.argv) > 1:
+        category = sys.argv[1]
 
     # get all pairs currently available
-    all_symbols = pd.DataFrame(requests.get(f'{API_BASE}market/instruments-info?category=spot').json()['result']['list'])
+    all_symbols = pd.DataFrame(requests.get(f'{API_BASE}market/instruments-info?category=' + category).json()['result']['list'])
     all_symbols = all_symbols[all_symbols['quoteCoin'] == 'USDT']
     blacklist = ['EUR', 'GBP', 'AUD', 'BCHABC', 'BCHSV', 'DAI', 'PAX', 'WBTC', 'BUSD', 'TUSD', 'UST', 'USDC', 'USDSB', 'USDS', 'SUSD', 'USDP']
     for coin in blacklist:
