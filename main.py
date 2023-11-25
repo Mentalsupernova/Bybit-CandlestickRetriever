@@ -164,6 +164,12 @@ def main():
     
     # sort reverse alphabetical, to ensure USDT pairings are updated first
     all_pairs.sort(key=lambda x:x[1], reverse=True)
+    filtered_pairs = []
+    for pair in all_pairs:
+        if pair[0][-2:] == '2L' or pair[0][-2:] == '3L' or pair[0][-2:] == '2S' or pair[0][-2:] == '3S':
+            print("Skipping", pair[0])
+        else:
+            filtered_pairs.append(pair)
 
     # randomising order helps during testing and doesn't make any difference in production
     #random.shuffle(all_pairs)
