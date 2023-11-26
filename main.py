@@ -172,15 +172,15 @@ def main():
             filtered_pairs.append(pair)
 
     # randomising order helps during testing and doesn't make any difference in production
-    #random.shuffle(all_pairs)
+    #random.shuffle(filtered_pairs)
 
     # make sure data folders exist
     os.makedirs('data', exist_ok=True)
     os.makedirs('compressed', exist_ok=True)
 
     # do a full update on all pairs
-    n_count = len(all_pairs)
-    for n, pair in enumerate(all_pairs, 1):
+    n_count = len(filtered_pairs)
+    for n, pair in enumerate(filtered_pairs, 1):
         base, quote = pair
         new_lines = all_candles_to_csv(base=base, quote=quote)
         if new_lines > 0:
