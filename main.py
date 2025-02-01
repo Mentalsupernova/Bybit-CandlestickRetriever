@@ -156,7 +156,7 @@ def main():
 
     # get all pairs currently available
     all_symbols = pd.DataFrame(requests.get(f'{API_BASE}market/instruments-info?category=' + category).json()['result']['list'])
-    all_symbols = all_symbols[all_symbols['quoteCoin'] == 'USDT']
+    all_symbols = all_symbols[all_symbols['quoteCoin'].isin(['USDT', 'USDC'])]
     blacklist = ['EUR', 'GBP', 'AUD', 'BCHABC', 'BCHSV', 'DAI', 'PAX', 'WBTC', 'BUSD', 'TUSD', 'UST', 'USDC', 'USDSB', 'USDS', 'SUSD', 'USDP']
     for coin in blacklist:
         all_symbols = all_symbols[all_symbols['baseCoin'] != coin]
