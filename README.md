@@ -6,13 +6,12 @@ Retrieve all historical candlestick data from crypto exchange Bybit.
 - `pandas`
 - `requests`
 - `pyarrow`
-
+- `aiohttp`
 ```
 sudo apt-get install python3-dev
-python3 -m pip install pand
-python3 -m pip install requests
-python3 -m pip install pyarrow
-python3 -m pip install fastparquet
+python -m venv venv
+source venv/bin/activate
+pip install -r requirments.txt
 ```
 
 ## Running
