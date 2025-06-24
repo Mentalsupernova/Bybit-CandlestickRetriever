@@ -3,17 +3,15 @@
 
 import json
 import os
-import random
-import subprocess
+import asyncio
+import aiohttp
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 import numpy as np
-import requests
 import pandas as pd
 import preprocessing as pp
 
-START_TIME = (datetime.now() - timedelta(hours=0, minutes=5))
 API_BASE = 'https://api.bybit.com/v5/'
 
 LABELS = [
@@ -26,168 +24,176 @@ LABELS = [
     'quote_asset_volume',
 ]
 
-category = 'spot'
-
-def get_batch(symbol, interval='1', start_time=0, limit=1000):
-    """Use a GET request to retrieve a batch of candlesticks. Process the JSON into a pandas
-    dataframe and return it. If not successful, return an empty dataframe.
+async def async_get_batch(session, symbol, category, interval='1', start_time=0, end_time=0, limit=1000, semaphore=None):
+    """Use an async GET request to retrieve a batch of candlesticks from start_time to end_time.
+    Process the JSON into a pandas dataframe and return it. If not successful, return an empty dataframe.
     """
-
     params = {
         'category': category,
         'symbol': symbol,
         'interval': interval,
         'start': start_time,
+        'end': end_time,
         'limit': limit
     }
-    try:
-        # timeout should also be given as a parameter to the function
-        response = requests.get(f'{API_BASE}market/kline', params, timeout=30)
-        data = response.json()['result']['list']
-        data.reverse()
+    async with semaphore:
+        try:
+            async with session.get(f'{API_BASE}market/kline', params=params, timeout=30) as response:
+                if response.status == 200:
+                    data = (await response.json())['result']['list']
+                    data.reverse()
+                    df = pd.DataFrame(data, columns=LABELS)
+                    df['open_time'] = df['open_time'].astype(np.int64)
+                    return df
+                else:
+                    print(f'Got erroneous response back for {symbol} ({category}): {response.status}')
+                    return pd.DataFrame([])
+        except (aiohttp.ClientConnectionError, aiohttp.ClientConnectorError):
+            print(f'Connection error for {symbol} ({category}), Cooling down for 5 mins...')
+            await asyncio.sleep(5 * 60)
+            return await async_get_batch(session, symbol, category, interval, start_time, end_time, limit, semaphore)
+        except asyncio.TimeoutError:
+            print(f'Timeout for {symbol} ({category}), Cooling down for 5 mins...')
+            await asyncio.sleep(5 * 60)
+            return await async_get_batch(session, symbol, category, interval, start_time, end_time, limit, semaphore)
+        except Exception as e:
+            print(f'Unknown error for {symbol} ({category}): {e}, Cooling down for 5 mins...')
+            await asyncio.sleep(5 * 60)
+            return await async_get_batch(session, symbol, category, interval, start_time, end_time, limit, semaphore)
 
-    except requests.exceptions.ConnectionError:
-        print('Connection error, Cooling down for 5 mins...')
-        time.sleep(5 * 60)
-        return get_batch(symbol, interval, start_time, limit)
-    
-    except requests.exceptions.Timeout:
-        print('Timeout, Cooling down for 5 min...')
-        time.sleep(5 * 60)
-        return get_batch(symbol, interval, start_time, limit)
-    
-    except requests.exceptions.ConnectionResetError:
-        print('Connection reset by peer, Cooling down for 5 min...')
-        time.sleep(5 * 60)
-        return get_batch(symbol, interval, start_time, limit)
-
-    except Exception as e:
-        print(f'Unknown error: {e}, Cooling down for 5 min...')
-        time.sleep(5 * 60)
-        return get_batch(symbol, interval, start_time, limit)
-
-    if response.status_code == 200:
-        df = pd.DataFrame(data, columns=LABELS)
-        df['open_time'] = df['open_time'].astype(np.int64)
-        df = df[df.open_time < START_TIME.timestamp() * 1000]
-        return df
-    print(f'Got erroneous response back: {response}')
-    return pd.DataFrame([])
-
-def all_candles_to_csv(base, quote, interval='1'):
-    """Collect a list of candlestick batches with all candlesticks of a trading pair,
-    concat into a dataframe and write it to CSV.
+async def all_candles_to_csv(base, quote, category, interval='1', semaphore=None, session=None):
+    """Collect klines starting from current timestamp, moving backwards until no klines are returned.
+    Concat into a dataframe and write to CSV and Parquet.
     """
+    symbol = base + quote
+    now = int(datetime.now().timestamp() * 1000)
+    end_time = now
+    start_time = end_time - (1000 * 60 * 1000)
+    batches = []
 
-    # see if there is any data saved on disk already
     try:
-        batches = [pd.read_csv(f'data/{base}-{quote}.csv')]
-        last_timestamp = batches[-1]['open_time'].max()
-        new_file = False
+        existing_df = pd.read_csv(f'data/{base}-{quote}.csv')
+        old_lines = len(existing_df.index)
     except FileNotFoundError:
-        batches = [pd.DataFrame([], columns=LABELS)]
-        # last_timestamp = int((datetime.now() - timedelta(days=7)).timestamp() * 1000)
-        last_timestamp = 1640995200000  # 2022-01-01
-        new_file = True
-    old_lines = len(batches[-1].index)
+        existing_df = pd.DataFrame([], columns=LABELS)
+        old_lines = 0
 
-    # gather all candlesticks available, starting from the last timestamp loaded from disk or 0
-    # stop if the timestamp that comes back from the api is the same as the last one
-    previous_timestamp = None
-
-    while previous_timestamp != last_timestamp:
-        # stop if we reached data from today
-        #if date.fromtimestamp(last_timestamp / 1000) >= date.today():
-        #    break
-
-        previous_timestamp = last_timestamp
-
-        new_batch = get_batch(
-            symbol=base+quote,
+    while True:
+        new_batch = await async_get_batch(
+            session=session,
+            symbol=symbol,
+            category=category,
             interval=interval,
-            start_time=last_timestamp+1
+            start_time=start_time,
+            end_time=end_time,
+            limit=1000,
+            semaphore=semaphore
         )
 
-        # requesting candles from the future returns empty
-        # also stop in case response code was not 200
-        if new_batch.empty and not new_file:
-            break
-
         if new_batch.empty:
-            last_timestamp = last_timestamp + 86400000
-        else:
-            last_timestamp = new_batch['open_time'].max()
-
-        # sometimes no new trades took place yet on date.today();
-        # in this case the batch is nothing new
-        if previous_timestamp == last_timestamp:
             break
 
-        if not new_batch.empty:
-            batches.append(new_batch)
-            new_file = False
-        last_datetime = datetime.fromtimestamp(last_timestamp / 1000)
+        batches.append(new_batch)
+        end_time = start_time - 1
+        start_time = start_time - (1000 * 60 * 1000)
 
+        last_datetime = datetime.fromtimestamp(new_batch['open_time'].iloc[-1] / 1000)
         covering_spaces = 20 * ' '
-        print(datetime.now(), base, quote, interval + 'min', str(last_datetime)+covering_spaces, end='\r', flush=True)
+        print(f'{datetime.now()} {base} {quote} {category} {interval}min {str(last_datetime)}{covering_spaces}', end='\r', flush=True)
 
-    # write clean version of csv to parquet
+    if not batches:
+        print(f"{datetime.now()} No new klines for {base}-{quote} ({category})")
+        return 0
+
+    new_df = pd.concat(batches, ignore_index=True)
+    df = pd.concat([existing_df, new_df], ignore_index=True)
+    df = pp.quick_clean(df)
+    df = df.drop_duplicates(subset=['open_time'], keep='last')
+    df = df.sort_values(by='open_time').reset_index(drop=True)
+
     parquet_name = f'{base}-{quote}.parquet'
     full_path = f'compressed/{parquet_name}'
-    df = pd.concat(batches, ignore_index=True)
-    df = pp.quick_clean(df)
-
     pp.write_raw_to_parquet(df, full_path)
+    df.to_csv(f'data/{category}_{base}{quote}.csv', index=False)
 
-    # in the case that new data was gathered write it to disk
-    if len(batches) > 1:
-        df.to_csv(f'data/{base}-{quote}.csv', index=False)
-        return len(df.index) - old_lines
-    return 0
+    new_lines = len(df.index) - old_lines
+    return new_lines
 
+async def process_symbol_pair(pair, semaphore, session):
+    """Process a single symbol pair and return the number of new lines written."""
+    base, quote, category = pair
+    new_lines = await all_candles_to_csv(base=base, quote=quote, category=category, semaphore=semaphore, session=session)
+    return base, quote, category, new_lines
 
-def main():
-    """Main loop; loop over all currency pairs that exist on the exchange. Once done upload the
-    compressed (Parquet) dataset to Kaggle.
-    """
-    global category
-    if len(sys.argv) > 1:
-        category = sys.argv[1]
+async def check_symbol_status(session, symbol, category, semaphore):
+    """Check if a symbol is tradeable by fetching its instrument info."""
+    params = {'category': category, 'symbol': symbol}
+    async with semaphore:
+        try:
+            async with session.get(f'{API_BASE}market/instruments-info', params=params) as response:
+                if response.status == 200:
+                    data = (await response.json())['result']['list']
+                    if data and 'status' in data[0]:
+                        return data[0]['status'] == 'Trading'
+                return False
+        except Exception as e:
+            print(f"Error checking status for {symbol} ({category}): {e}")
+            return False
 
-    # get all pairs currently available
-    all_symbols = pd.DataFrame(requests.get(f'{API_BASE}market/instruments-info?category=' + category).json()['result']['list'])
-    all_symbols = all_symbols[all_symbols['quoteCoin'].isin(['USDT', 'USDC'])]
-    blacklist = ['EUR', 'GBP', 'AUD', 'BCHABC', 'BCHSV', 'DAI', 'PAX', 'WBTC', 'BUSD', 'TUSD', 'UST', 'USDC', 'USDSB', 'USDS', 'SUSD', 'USDP']
-    for coin in blacklist:
-        all_symbols = all_symbols[all_symbols['baseCoin'] != coin]
-    all_pairs = [tuple(x) for x in all_symbols[['baseCoin', 'quoteCoin']].to_records(index=False)]
-    
-    # sort reverse alphabetical, to ensure USDT pairings are updated first
-    all_pairs.sort(key=lambda x:x[1], reverse=True)
-    filtered_pairs = []
-    for pair in all_pairs:
-        if pair[0][-2:] == '2L' or pair[0][-2:] == '3L' or pair[0][-2:] == '2S' or pair[0][-2:] == '3S':
-            print("Skipping", pair[0])
-        else:
-            filtered_pairs.append(pair)
+async def main():
+    """Main loop; fetch spot and linear symbols, merge, and process concurrently, 10 at a time."""
+    async with aiohttp.ClientSession() as session:
+        symbols = []
+        for cat in ['spot', 'linear']:
+            async with session.get(f'{API_BASE}market/instruments-info?category={cat}') as response:
+                if response.status == 200:
+                    data = (await response.json())['result']['list']
+                    df = pd.DataFrame(data)
+                    df['category'] = cat
+                    symbols.append(df)
+                else:
+                    print(f"Failed to fetch {cat} symbols: {response.status}")
+                    return
+        
+        all_symbols = pd.concat(symbols, ignore_index=True)
+        all_symbols = all_symbols[all_symbols['quoteCoin'].isin(['USDT', 'USDC'])]
+        blacklist = ['EUR', 'GBP', 'AUD', 'BCHABC', 'BCHSV', 'DAI', 'PAX', 'WBTC', 'BUSD', 'TUSD', 'UST', 'USDC', 'USDSB', 'USDS', 'SUSD', 'USDP']
+        for coin in blacklist:
+            all_symbols = all_symbols[all_symbols['baseCoin'] != coin]
 
-    # randomising order helps during testing and doesn't make any difference in production
-    #random.shuffle(filtered_pairs)
+        filtered_pairs = []
+        pairs = 10
+        semaphore = asyncio.Semaphore(pairs)
+        for _, row in all_symbols.iterrows():
+            symbol = row['baseCoin'] + row['quoteCoin']
+            if row['baseCoin'][-2:] in ['2L', '3L', '2S', '3S']:
+                print(f"Skipping {row['baseCoin']} ({row['category']})")
+                continue
+            if await check_symbol_status(session, symbol, row['category'], semaphore):
+                filtered_pairs.append((row['baseCoin'], row['quoteCoin'], row['category']))
+            else:
+                print(f"Skipping {symbol} ({row['category']}) due to inactive status")
 
-    # make sure data folders exist
-    os.makedirs('data', exist_ok=True)
-    os.makedirs('compressed', exist_ok=True)
+        filtered_pairs.sort(key=lambda x: x[1], reverse=True)
 
-    # do a full update on all pairs
-    n_count = len(filtered_pairs)
-    for n, pair in enumerate(filtered_pairs, 1):
-        base, quote = pair
-        new_lines = all_candles_to_csv(base=base, quote=quote)
-        if new_lines > 0:
-            print(f'{datetime.now()} {n}/{n_count} Wrote {new_lines} new lines to file for {base}-{quote}')
-        else:
-            print(f'{datetime.now()} {n}/{n_count} Already up to date with {base}-{quote}')
+        os.makedirs('data', exist_ok=True)
+        os.makedirs('compressed', exist_ok=True)
 
+        async with aiohttp.ClientSession() as session:
+            n_count = len(filtered_pairs)
+            for i in range(0, len(filtered_pairs), pairs):
+                batch = filtered_pairs[i:i+pairs]
+                tasks = [process_symbol_pair(pair, semaphore, session) for pair in batch]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for j, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        print(f"Error processing pair {batch[j]}: {result}")
+                    else:
+                        base, quote, category, new_lines = result
+                        if new_lines > 0:
+                            print(f"{datetime.now()} {i+j+1}/{n_count} Wrote {new_lines} new lines for {base}-{quote} ({category})")
+                        else:
+                            print(f"{datetime.now()} {i+j+1}/{n_count} Already up to date with {base}-{quote} ({category})")
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
