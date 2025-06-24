@@ -160,10 +160,22 @@ async def main():
         blacklist = ['EUR', 'GBP', 'AUD', 'BCHABC', 'BCHSV', 'DAI', 'PAX', 'WBTC', 'BUSD', 'TUSD', 'UST', 'USDC', 'USDSB', 'USDS', 'SUSD', 'USDP']
         for coin in blacklist:
             all_symbols = all_symbols[all_symbols['baseCoin'] != coin]
-
+        #15 20
         filtered_pairs = []
-        pairs = 10
+        pairs = 5
         semaphore = asyncio.Semaphore(pairs)
+        lst = os.listdir("./data")
+        already_done = []
+        for i in lst:
+            print(i)
+            cpy = i
+            already_done.append(cpy.split("_")[1].replace(".csv",""))
+
+
+        all_symbols = all_symbols[
+            ~all_symbols.apply(lambda x: x['baseCoin'] + x['quoteCoin'], axis=1).isin(already_done)
+        ]
+
         for _, row in all_symbols.iterrows():
             symbol = row['baseCoin'] + row['quoteCoin']
             if row['baseCoin'][-2:] in ['2L', '3L', '2S', '3S']:
